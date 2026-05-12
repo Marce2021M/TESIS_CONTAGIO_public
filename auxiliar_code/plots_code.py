@@ -1898,6 +1898,7 @@ def plot_5node_aggregated(
 
 # 8) GIF with fixed positions over time
 
+
 def _fig_to_rgb_array(fig: plt.Figure, dpi: int = 120) -> np.ndarray:
     fig.canvas.draw()
     w, h = fig.canvas.get_width_height()
@@ -1920,10 +1921,18 @@ def _draw_frame(
     threshold: float,
     max_w_global: float,
     title: str,
-    net_sig_series: Optional[pd.Series] = None,          # <--- REINCORPORADO
-    edges_sig_dict: Optional[Dict[Tuple[str, str], bool]] = None, # <--- REINCORPORADO
+    net_sig_series: Optional[pd.Series] = None,          
+    edges_sig_dict: Optional[Dict[Tuple[str, str], bool]] = None, 
     show_legend: bool = True,
-    dpi: int = 120
+    dpi: int = 120,
+    node_labels: Optional[Dict[str, str]] = None,
+    label_color: str = "black",
+    node_base_size: float = 2500.0,
+    node_mult_size: float = 3000.0,
+    font_size: int = 10,
+    # --- NUEVOS PARÁMETROS PARA CONGELAR LA CÁMARA ---
+    fixed_xlim: Optional[Tuple[float, float]] = None,
+    fixed_ylim: Optional[Tuple[float, float]] = None
 ) -> np.ndarray:
     
     names = theta_matrix.index.tolist()
@@ -1942,15 +1951,14 @@ def _draw_frame(
     out_strength = {n: sum(d["weight"] for _, _, d in G.out_edges(n, data=True)) for n in G.nodes()}
     max_out = max(out_strength.values()) if out_strength else 1.0
     
-    node_sizes_dict = {n: 1500.0 + 2000.0 * (out_strength[n] / max_out if max_out > 0 else 0.0) for n in G.nodes()}
+    node_sizes_dict = {n: node_base_size + node_mult_size * (out_strength[n] / max_out if max_out > 0 else 0.0) for n in G.nodes()}
     node_colors_dict = _colors_from_net(G, compute_net_by_node(theta_matrix), eps=1e-12)
 
     sig_nodes = [n for n in G.nodes() if net_sig_series.get(n, True)]
     insig_nodes = [n for n in G.nodes() if not net_sig_series.get(n, True)]
 
-    fig, ax = plt.subplots(figsize=(10, 9), dpi=dpi)
+    fig, ax = plt.subplots(figsize=(12, 10), dpi=dpi)
 
-    # NODOS (Significativos sólidos, No significativos con tramas)
     if sig_nodes:
         nx.draw_networkx_nodes(
             G, pos, nodelist=sig_nodes,
@@ -1968,18 +1976,25 @@ def _draw_frame(
         )
         nodes_collection.set_hatch('////')
 
-    nx.draw_networkx_labels(G, pos, font_size=11, font_weight='bold', font_color='black', ax=ax)
+    labels_to_draw = node_labels if node_labels else {n: n for n in G.nodes()}
+    nx.draw_networkx_labels(
+        G, pos, 
+        labels=labels_to_draw, 
+        font_size=font_size, 
+        font_weight='bold', 
+        font_color=label_color, 
+        ax=ax
+    )
 
     GROUP_COLORS = {
-        "USA": "#2980b9",         
-        "Mexico": "#5fff24",      
-        "Canada": "#fc861f",      
-        "Energéticos": "#7f8c8d", 
-        "Oro": "#fffb18",        
+        "EE.UU.": "#2980b9",         
+        "México": "#5fff24",      
+        "Canadá": "#f9611bff",      
+        "Energéticos": "#fc3bff", 
+        "Oro": "#fdc600",        
         OTHERS_GROUP: "#bdc3c7"
     }
 
-    # ARISTAS (Líneas punteadas para no significativas)
     weights = nx.get_edge_attributes(G, 'weight')
     if weights:
         max_divisor = max(1e-12, max_w_global)
@@ -1992,10 +2007,9 @@ def _draw_frame(
             base_hex = GROUP_COLORS.get(src_group, "#bdc3c7")
             rgba = list(mcolors.to_rgba(base_hex))
             
-            # Significancia de la arista
             is_sig = edges_sig_dict.get((u, v), True)
             edge_style = "solid" if is_sig else "dashed"
-            rgba[3] = 0.85 if is_sig else 0.20 # Más tenue si no es significativa
+            rgba[3] = 0.85 if is_sig else 0.20 
             
             nx.draw_networkx_edges(
                 G, pos, 
@@ -2010,13 +2024,12 @@ def _draw_frame(
             )
 
     if show_legend:
-        # Leyenda detallada reincorporada para el GIF
         legend_handles = [
-            mpatches.Patch(facecolor="#27ae60", label="Emisor Neto (Sig.)"),
-            mpatches.Patch(facecolor="#e74c3c", label="Receptor Neto (Sig.)"),
+            mpatches.Patch(facecolor="#2CA02C", label="Emisor Neto (Sig.)"),
+            mpatches.Patch(facecolor="#D62728", label="Receptor Neto (Sig.)"),
             mlines.Line2D([0], [0], color="black", lw=2, label="Transmisión Sig."),
-            mpatches.Patch(facecolor="#27ae60", hatch='////', edgecolor='white', linewidth=0, label="Emisor Neto (No Sig.)"),
-            mpatches.Patch(facecolor="#e74c3c", hatch='////', edgecolor='white', linewidth=0, label="Receptor Neto (No Sig.)"),
+            mpatches.Patch(facecolor="#2CA02C", hatch='////', edgecolor='white', linewidth=0, label="Emisor Neto (No Sig.)"),
+            mpatches.Patch(facecolor="#D62728", hatch='////', edgecolor='white', linewidth=0, label="Receptor Neto (No Sig.)"),
             mlines.Line2D([0], [0], color="black", lw=2, linestyle='dashed', alpha=0.4, label="Transmisión No Sig."),
         ]
         grupos_presentes = set(group_map.values())
@@ -2028,27 +2041,40 @@ def _draw_frame(
                   ncol=3, frameon=False, fontsize=10)
 
     ax.set_title(title, fontsize=16, fontweight='bold', pad=15)
+    
+    # =======================================================
+    # LA MAGIA ESTÁ AQUÍ: Congelar los ejes independientemente
+    # del grosor de las flechas que intente dibujar networkx
+    # =======================================================
+    if fixed_xlim:
+        ax.set_xlim(fixed_xlim)
+    if fixed_ylim:
+        ax.set_ylim(fixed_ylim)
+        
     ax.axis("off")
-    plt.tight_layout()
+    # Quitamos tight_layout que es el enemigo número 1 de las animaciones estables
+    fig.subplots_adjust(left=0.05, right=0.95, top=0.90, bottom=0.15)
 
     return _fig_to_rgb_array(fig, dpi=dpi)
 
 def animate_full_network(
     cn: Dict[str, object],
-    ci: Dict[str, object],                   # <--- NUEVO: Matrices de significancia
-    idx_ref: pd.DatetimeIndex,               # <--- NUEVO: Índice temporal de referencia
-    orden_net: List[str],                    # <--- NUEVO: Orden de las variables
+    ci: Dict[str, object],                   
+    idx_ref: pd.DatetimeIndex,               
+    orden_net: List[str],                    
     when_list: Optional[Iterable[pd.Timestamp | str]] = None,
     threshold: float = 0.0,
     step: int = 1,
     outfile: str = "connectedness.gif",
     dpi: int = 100,  
-    duration: float = 0.3 
+    duration: float = 0.3,
+    node_labels: Optional[Dict[str, str]] = None,
+    label_color: str = "#090E5BFF",
+    node_base_size: float = 3000.0,
+    node_mult_size: float = 3000.0,
+    font_size: int = 13
 ) -> None:
-    """
-    Genera el GIF de la red completa cruzando CADA FOTOGRAMA con las matrices
-    de Bootstrap (ci) para dibujar dinámicamente la significancia estadística.
-    """
+    
     import imageio.v2 as imageio
 
     theta_panel: pd.DataFrame = cn["theta"]
@@ -2057,9 +2083,20 @@ def animate_full_network(
 
     names = list(dict.fromkeys(theta_panel.columns.get_level_values(0)))
     gmap = build_group_map(GROUPS, names)
-    pos = make_grouped_positions(names, gmap, group_radius=2.0, node_spread=0.40, seed=1)
+    
+    pos = make_grouped_positions(names, gmap, group_radius=2.8, node_spread=0.85, seed=1) 
 
-    # 1. Encontrar el peso máximo global para que la escala visual sea constante
+    # --- CÁLCULO DE LA CÁMARA (Bounding Box Estático) ---
+    xs = [coord[0] for coord in pos.values()]
+    ys = [coord[1] for coord in pos.values()]
+    
+    # 25% de margen extra alrededor de los nodos más extremos
+    x_margin = (max(xs) - min(xs)) * 0.25
+    y_margin = (max(ys) - min(ys)) * 0.25
+    
+    global_xlim = (min(xs) - x_margin, max(xs) + x_margin)
+    global_ylim = (min(ys) - y_margin, max(ys) + y_margin)
+
     max_w = 0.0
     for t in idx_all:
         row = theta_panel.loc[t]
@@ -2070,7 +2107,6 @@ def animate_full_network(
     if max_w <= 0.0:
         max_w = 1.0
 
-    # Extraer las matrices de Numpy de los intervalos de confianza
     matriz_lo_net = np.asarray(ci["NET"][0])
     matriz_hi_net = np.asarray(ci["NET"][1])
     matriz_lo_pdc = np.asarray(ci["PDC"][0])
@@ -2086,13 +2122,11 @@ def animate_full_network(
         theta_t = row.unstack(level=1).reindex(index=names, columns=names)
         title = f"Red Direccional (Desagregada) — {pd.to_datetime(t).date()}"
         
-        # --- LÓGICA DE SIGNIFICANCIA POR FOTOGRAMA ---
         try:
             t_pos = idx_ref.get_loc(pd.to_datetime(t))
         except KeyError:
             t_pos = idx_ref.get_indexer([pd.to_datetime(t)], method='nearest')[0]
 
-        # Nodos
         lo_net_t = matriz_lo_net[t_pos, :]
         hi_net_t = matriz_hi_net[t_pos, :]
         net_sig_series = pd.Series(False, index=orden_net)
@@ -2100,7 +2134,6 @@ def animate_full_network(
             if lo_net_t[j] > 0 or hi_net_t[j] < 0:
                 net_sig_series[var] = True
 
-        # Aristas
         lo_pdc_t = matriz_lo_pdc[t_pos, :, :]
         hi_pdc_t = matriz_hi_pdc[t_pos, :, :]
         edges_sig_dict = {}
@@ -2117,7 +2150,6 @@ def animate_full_network(
                 else:
                     edges_sig_dict[(src, tgt)] = False
 
-        # Generar frame pasando las variables de significancia
         frame = _draw_frame(
             theta_matrix=theta_t, 
             pos=pos, 
@@ -2125,10 +2157,17 @@ def animate_full_network(
             threshold=threshold, 
             max_w_global=max_w, 
             title=title, 
-            net_sig_series=net_sig_series,       # <--- PASADO AL DIBUJO
-            edges_sig_dict=edges_sig_dict,       # <--- PASADO AL DIBUJO
+            net_sig_series=net_sig_series,       
+            edges_sig_dict=edges_sig_dict,       
             show_legend=True, 
-            dpi=dpi
+            dpi=dpi,
+            node_labels=node_labels,
+            label_color=label_color,
+            node_base_size=node_base_size,
+            node_mult_size=node_mult_size,
+            font_size=font_size,
+            fixed_xlim=global_xlim, # <-- Congelando Eje X
+            fixed_ylim=global_ylim  # <-- Congelando Eje Y
         )
         frames.append(frame)
         
@@ -2149,9 +2188,7 @@ def animate_grouped5_network(
     duration: float = 0.3,
     normalize_rows: bool = True,
 ) -> None:
-    """
-    Genera el GIF de la red agregada (5 Bloques) usando el layout de pentágono.
-    """
+    
     import imageio.v2 as imageio
 
     theta_panel: pd.DataFrame = cn["theta"]
@@ -2177,8 +2214,17 @@ def animate_grouped5_network(
     group_names = ThetaG0.index.tolist()
     gmap_identity = {g: g for g in group_names}
     
-    # Layout estático en los vértices del pentágono
-    posG = make_grouped_positions(group_names, gmap_identity, group_radius=2.0, node_spread=0.0, seed=1)
+    posG = make_grouped_positions(group_names, gmap_identity, group_radius=3.0, node_spread=0.0, seed=1, y_squash=0.70)
+
+    # --- CÁLCULO DE LA CÁMARA (Bounding Box Estático para la red agregada) ---
+    xs = [coord[0] for coord in posG.values()]
+    ys = [coord[1] for coord in posG.values()]
+    
+    x_margin = (max(xs) - min(xs)) * 0.25 if max(xs) > min(xs) else 2.0
+    y_margin = (max(ys) - min(ys)) * 0.25 if max(ys) > min(ys) else 2.0
+    
+    global_xlim = (min(xs) - x_margin, max(xs) + x_margin)
+    global_ylim = (min(ys) - y_margin, max(ys) + y_margin)
 
     max_w = 0.0
     for t in idx_all:
@@ -2195,7 +2241,22 @@ def animate_grouped5_network(
         ThetaGt = _grouped_theta_at(t).reindex(index=group_names, columns=group_names)
         title = f"Red Direccional (Bloques Agregados) — {pd.to_datetime(t).date()}"
         
-        frame = _draw_frame(ThetaGt, posG, gmap_identity, threshold, max_w, title, show_legend=True, dpi=dpi)
+        frame = _draw_frame(
+            theta_matrix=ThetaGt, 
+            pos=posG, 
+            group_map=gmap_identity, 
+            threshold=threshold, 
+            max_w_global=max_w, 
+            title=title, 
+            show_legend=True, 
+            dpi=dpi,
+            node_base_size=4000.0,
+            node_mult_size=4500.0,
+            font_size=10,
+            label_color="#FFFFFF",
+            fixed_xlim=global_xlim, # <-- Congelando Eje X
+            fixed_ylim=global_ylim  # <-- Congelando Eje Y
+        )
         frames.append(frame)
         
         if (i+1) % 50 == 0:
@@ -2204,60 +2265,3 @@ def animate_grouped5_network(
     print("Construyendo archivo GIF...")
     imageio.mimsave(outfile, frames, duration=duration, loop=0)
     print(f"¡Éxito! GIF guardado en: {outfile}")
-# 9) Missing utilities (implemented here for completeness)
-
-def retime_gif_imageio(
-    infile: str,
-    outfile: str,
-    *,
-    speed: float | None = None,
-    duration: float | None = None
-) -> None:
-    """
-    Change playback speed of an existing GIF.
-
-    Exactly one of:
-      - speed: multiply every frame's duration by this factor (e.g., 2.0 = 2x slower, 0.5 = 2x faster)
-      - duration: set a fixed duration in seconds for every frame (e.g., 0.8)
-
-    Preserves loop count and attempts to keep palette/disposal metadata intact.
-    """
-    if (speed is None) == (duration is None):
-        raise ValueError("Provide exactly one of `speed` or `duration`.")
-
-    with imageio.get_reader(infile) as reader:
-        # Collect frames and per-frame durations if present
-        frames = []
-        durations = []
-        loop = 0  # default loop
-        try:
-            loop = reader.get_meta_data().get("loop", 0)
-        except Exception:
-            pass
-
-        for i, frame in enumerate(reader):
-            frames.append(frame)
-            # Try to get per-frame duration (in seconds)
-            d = 0.1  # sensible fallback
-            try:
-                # `get_meta_data(index=i)` works for some plugins
-                md = reader.get_meta_data(index=i)
-                if "duration" in md and md["duration"]:
-                    d = float(md["duration"])
-            except Exception:
-                pass
-            durations.append(d)
-
-    # Compute new durations
-    if duration is not None:
-        new_durations = [float(duration)] * len(frames)
-    else:
-        new_durations = [max(0.01, d * float(speed)) for d in durations]  # clamp to >= 10 ms
-
-    # Write with updated timing
-    with imageio.get_writer(outfile, mode="I", loop=loop) as writer:
-        for frame, d in zip(frames, new_durations):
-            writer.append_data(frame, {"duration": d})
-
-    print(f"Retimed GIF saved to: {outfile}")
-
